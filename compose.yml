@@ -1,0 +1,18 @@
+networks:
+  internal_net:
+
+services:
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: rabbitmq
+    networks:
+      internal_net:
+    ports:
+      - 5672:5672
+      - 15672:15672
+    restart: "on-failure"
+    # WARN: delete these variables and use the env file
+    # HACK: this is just for debug perposes
+    environment:
+      - RABBITMQ_DEFAULT_USER=userf
+      - RABBITMQ_DEFAULT_PASS=userd
