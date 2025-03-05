@@ -1,5 +1,5 @@
 from config.celeryconfig import app
 
-@app.task
+@app.task(name='add')
 def add(x, y):
     return x + y
