@@ -16,3 +16,21 @@ services:
     environment:
       - RABBITMQ_DEFAULT_USER=userf
       - RABBITMQ_DEFAULT_PASS=userd
+
+  celery:
+    container_name: celery
+    image: python:3.11-alpine
+    restart: "on-failure"
+    networks: 
+      - internal_net
+    working_dir: /home/celery
+    ports:
+      - 8080:8080
+    entrypoint:
+      sh -c "pip install -r requirements.txt && apk add ffmpeg && celery -A tasks.download_torrents worker --loglevel=INFO"
+    volumes:
+      - ./celery/:/home/celery
+      - /home/nramadan/goinfre/tem/:/home/data/
+    # depends_on:
+    #   rabbitmq: 
+    #     condition: service_started
