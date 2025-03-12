@@ -56,8 +56,8 @@ class VideoConverter:
         
         self.process = await asyncio.create_subprocess_exec(
             *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            # stdout=asyncio.subprocess.PIPE,
+            # stderr=asyncio.subprocess.PIPE
         )
         print(f"Conversion started from segment {self.current_segment}. Press Ctrl+C to pause/resume.")
 

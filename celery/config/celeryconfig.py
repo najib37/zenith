@@ -2,7 +2,6 @@
 from celery import Celery
 import json
 import libtorrent as lt
-import time
 from time import sleep
 
 app = Celery('tasks')
@@ -19,7 +18,19 @@ app.conf.update(
 
 
 class TorrentDownloader:
+
+    _instance = None
+    
+    @classmethod
+    def get_instance(cls):
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+    
     def __init__(self):
+        if TorrentDownloader._instance is not None:
+            raise Exception("This class is a singleton! Use get_instance() instead")
+    # def __init__(self):
         self.session = lt.session()
 
         self.session.add_extension('ut_metadata')
@@ -51,7 +62,9 @@ class TorrentDownloader:
     def get_torrent_info(self, movie_key):
         handle = self.handles.get(movie_key)
         if not handle:
-            return None
+            return {
+                "status": "no data found",
+            }
         
         status = handle.status()
 
@@ -79,9 +92,10 @@ class TorrentDownloader:
         params.storage_mode = lt.storage_mode_t.storage_mode_sparse
 
         handle = self.session.add_torrent(params)
-        self.handles[movie_key] = handle
 
-        return handle
+        # self.handles[movie_key] = handle
+
+        return {"status": "torrent_added_success"}
 
     def get_torrent_status(self, movie_key):
         handle = self.handles.get(movie_key)
@@ -93,5 +107,3 @@ class TorrentDownloader:
     def remove_torrent(self, movie_key):
         handle = self.handles.get(movie_key)
         self.session.remove_torrent(handle)
-
-downloader = TorrentDownloader()
