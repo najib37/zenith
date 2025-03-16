@@ -1,8 +1,12 @@
 
+import asyncio
 from celery import Celery
 import json
 import libtorrent as lt
 from time import sleep
+import mimetypes
+
+from tasks.converter import VideoConverter
 
 app = Celery('tasks')
 
@@ -86,16 +90,50 @@ class TorrentDownloader:
         return json.dumps(info)
 
     def add_torrent(self, magnet_link, movie_key):
-
+        relative_path = f"/movies/{str(movie_key)}/"
+        full_path = f"/home/data/movies/{str(movie_key)}/"
         params = lt.parse_magnet_uri(magnet_link)
-        params.save_path = f'/home/data/movies/{movie_key}/'
-        params.storage_mode = lt.storage_mode_t.storage_mode_sparse
-
+        params.save_path = full_path
+        params.storage_mode = lt.storage_mode_t.storage_mode_allocate
         handle = self.session.add_torrent(params)
+        handle.set_sequential_download(True)
+        mimetypes.init()
+        mimetypes.add_type('video/x-matroska', '.mkv')
+        mimetypes.add_type('video/mp4', '.mp4')
 
-        # self.handles[movie_key] = handle
+        time = 0
+        while not handle.status().has_metadata:
+            if time > 10: return {
+                "status": "no_metadata",
+                "code": 404
+            }
+            # TODO: add cleanup
+            sleep(0.5)
+            time += 0.5
 
-        return {"status": "torrent_added_success"}
+        self.handles[movie_key] = handle
+
+        files = [
+            {
+                "path": f"{relative_path}/{f.path}",
+                "size": f.size,
+                "type": mimetypes.guess_type(f.path)[0]
+            }
+            for f in handle.status().torrent_file.files()
+        ]
+        
+        largest_file = max(files, key=lambda x: x['size'])
+
+        formated_metadata = {
+            "status": "torrent_added_success",
+            "code": 200,
+            "files": files
+        }
+
+        post = PostProcess(movie_key, largest_file)
+        post.post_process(movie_key, largest_file)
+
+        return formated_metadata
 
     def get_torrent_status(self, movie_key):
         handle = self.handles.get(movie_key)
@@ -107,3 +145,28 @@ class TorrentDownloader:
     def remove_torrent(self, movie_key):
         handle = self.handles.get(movie_key)
         self.session.remove_torrent(handle)
+
+class PostProcess:
+    def __init__(self, movie_key, movie_path):
+        self.torrent_downloader = TorrentDownloader.get_instance()
+        self.converter = VideoConverter(input_file=movie_path)
+    
+    def post_process(self, movie_key, movie_path):
+
+        match str(movie_path['type']):
+            case 'video/x-matroska':
+                self.processMkv(movie_key, movie_path)
+            case 'video/mp4':
+                pass
+            case _:
+                pass
+
+    def processMkv(self, movie_key, movie_path):
+        print("Processing MKV")
+        self.converter.start_conversion()
+
+    def processMp4(self, movie_key, movie_path):
+        pass
+
+    def processOther(self, movie_key, movie_path):
+        pass

@@ -43,10 +43,6 @@ def download_torrent(request, torrent_id):
             {'error': 'Torrent ID is required'}, 
             status=status.HTTP_400_BAD_REQUEST
         )
-    print("________________________________");
-    print(torrent_id)
-    print("________________________________");
-
     
     try:
         info = torrents.info(torrent_id=torrent_id)
@@ -59,7 +55,8 @@ def download_torrent(request, torrent_id):
         
         return Response({
             'status': 'download_started',
-            'torrent': result.get()
+            'torrent': result.get(),
+            "info": info.to_dict()
         })
     except Exception as e:
 
