@@ -34,62 +34,54 @@ class TorrentDownloader:
     def __init__(self):
         if TorrentDownloader._instance is not None:
             raise Exception("This class is a singleton! Use get_instance() instead")
-    # def __init__(self):
         self.session = lt.session()
-
         self.session.add_extension('ut_metadata')
         self.session.add_extension('ut_pex')
-        self.torrents = []
-        self.handles = {}
-    
-    def get_torrent_metadata(self, magnet_link):
-        params = lt.parse_magnet_uri(magnet_link)
-        params.save_path = '/home/data/temp/'
-        params.storage_mode = lt.storage_mode_t.storage_mode_sparse
-        
-        handle = self.session.add_torrent(params)
-        
-        while not handle.has_metadata():
-            sleep(1)
-        
-        torrent_info = handle.get_torrent_info()
 
-        formated_metadata = {
-            "name": torrent_info.name(),
-            "num_files": torrent_info.num_files(),
-            "total_size": torrent_info.total_size() / 1024 / 1024,
-            "files": torrent_info.files()
-        }
-        self.session.remove_torrent(handle)
-        return formated_metadata
+        self.jobs = {}
 
-    def get_torrent_info(self, movie_key):
-        handle = self.handles.get(movie_key)
-        if not handle:
-            return {
-                "status": "no data found",
-            }
-        
-        status = handle.status()
-
+    def get_info_from_handle(self, handle):
         info = {
-            "name": status.name,
-            "progress": status.progress * 100,  # Convert to percentage
-            "download_rate": status.download_rate / 1024,  # Convert to KB/s
-            "upload_rate": status.upload_rate / 1024,  # Convert to KB/s
-            "num_peers": status.num_peers,
-            "num_seeds": status.num_seeds,
-            "total_size": status.total_wanted / (1024 * 1024),  # Convert to MB
-            "total_downloaded": status.total_done / (1024 * 1024),  # Convert to MB
-            "state": str(status.state),
-            "paused": status.paused,
-            "is_finished": status.is_finished,
-            "is_seed": status.is_seeding,
-            "total_files": status.torrent_file,
+            "name": handle.status().name,
+            "progress": handle.status().progress * 100,  # Convert to percentage
+            "download_rate": handle.status().download_rate / 1024,  # Convert to KB/s
+            "upload_rate": handle.status().upload_rate / 1024,  # Convert to KB/s
+            "num_peers": handle.status().num_peers,
+            "num_seeds": handle.status().num_seeds,
+            "total_size": handle.status().total_wanted / (1024 * 1024),  # Convert to MB
+            "total_downloaded": handle.status().total_done / (1024 * 1024),  # Convert to MB
+            "state": str(handle.status().state),
+            "paused": handle.status().paused,
+            "is_finished": handle.status().is_finished,
+            "is_seed": handle.status().is_seeding,
         }
-        return json.dumps(info)
+        return info
 
     def add_torrent(self, magnet_link, movie_key):
+
+        print("++++++++++++++++++++++++++++++++++++++++++++")
+        print("++++++++++++++++++++++++++++++++++++++++++++")
+        print("adding torrent")
+        print("++++++++++++++++++++++++++++++++++++++++++++")
+        print("++++++++++++++++++++++++++++++++++++++++++++")
+        if movie_key in self.jobs:
+            print("++++++++++++++++++++++++++++++++++++++++++++")
+            print("++++++++++++++++++++++++++++++++++++++++++++")
+            print("torrent already added")
+            print("++++++++++++++++++++++++++++++++++++++++++++")
+            print("++++++++++++++++++++++++++++++++++++++++++++")
+            return {
+                "status": "torrent_already_added",
+                "code": 200,
+                "info": self.get_info_from_handle(self.jobs[movie_key]['handle']),
+            }
+
+        print("++++++++++++++++++++++++++++++++++++++++++++")
+        print("++++++++++++++++++++++++++++++++++++++++++++")
+        print("adding new torrent")
+        print("++++++++++++++++++++++++++++++++++++++++++++")
+        print("++++++++++++++++++++++++++++++++++++++++++++")
+
         relative_path = f"/movies/{str(movie_key)}/"
         full_path = f"/home/data/movies/{str(movie_key)}/"
         params = lt.parse_magnet_uri(magnet_link)
@@ -111,8 +103,6 @@ class TorrentDownloader:
             sleep(0.5)
             time += 0.5
 
-        self.handles[movie_key] = handle
-
         files = [
             {
                 "path": f"{relative_path}/{f.path}",
@@ -124,49 +114,30 @@ class TorrentDownloader:
         
         largest_file = max(files, key=lambda x: x['size'])
 
+
+        converter = self.post_process(movie_key, largest_file)
+
+        self.jobs[movie_key] = {
+            "handle": handle,
+            "converter": converter
+        }
+
         formated_metadata = {
             "status": "torrent_added_success",
             "code": 200,
-            "files": files
+            "files": files,
+            "duration": converter.get_video_duration(largest_file['path']) if converter else 0,
+            "info": self.get_info_from_handle(handle),
         }
-
-        post = PostProcess(movie_key, largest_file)
-        post.post_process(movie_key, largest_file)
 
         return formated_metadata
 
-    def get_torrent_status(self, movie_key):
-        handle = self.handles.get(movie_key)
-
-        if not handle:
-            return None
-        return handle.status()
-
-    def remove_torrent(self, movie_key):
-        handle = self.handles.get(movie_key)
-        self.session.remove_torrent(handle)
-
-class PostProcess:
-    def __init__(self, movie_key, movie_path):
-        self.torrent_downloader = TorrentDownloader.get_instance()
-        self.converter = VideoConverter(input_file=movie_path)
-    
     def post_process(self, movie_key, movie_path):
-
         match str(movie_path['type']):
             case 'video/x-matroska':
-                self.processMkv(movie_key, movie_path)
+                converter = VideoConverter(movie_path['path'], movie_path['path'], movie_key)
+                return converter
             case 'video/mp4':
                 pass
             case _:
                 pass
-
-    def processMkv(self, movie_key, movie_path):
-        print("Processing MKV")
-        self.converter.start_conversion()
-
-    def processMp4(self, movie_key, movie_path):
-        pass
-
-    def processOther(self, movie_key, movie_path):
-        pass
