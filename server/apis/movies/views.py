@@ -10,7 +10,7 @@ torrents = py1337x.Py1337x()
 
 app = Celery (
     'tasks',
-    backend='rpc://',
+    backend='redis://localhost:6060',
     broker="amqp://userf:userd@localhost:5672"
 )
 
@@ -45,7 +45,11 @@ def download_torrent(request, torrent_id):
         )
     
     try:
+
         info = torrents.info(torrent_id=torrent_id)
+        print("________________________________");
+        print(f"info {info}")
+        print("________________________________");
         magnet_link = info.magnet_link
 
         result = app.send_task(

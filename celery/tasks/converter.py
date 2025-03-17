@@ -17,7 +17,16 @@ class VideoConverter:
         os.makedirs(f"{self.output_path}/1080/", exist_ok=True)
         os.makedirs(f"{self.output_path}/720/", exist_ok=True)
 
+    def file_exists(self, file_path):
+        if not os.path.exists(self.input_file):
+            return False
+        return os.path.isfile(file_path) and os.access(file_path, os.R_OK)
+
+    def is_ready_to_convert(self):
+        return self.file_exists(self.input_file) and self.duration > 0
+
     def get_video_duration(self, file_path):
+        if not self.file_exists(file_path): return 0
         try:
             probe = ffmpeg.probe(file_path)
             duration = float(probe['format']['duration'])

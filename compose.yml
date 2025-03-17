@@ -27,10 +27,22 @@ services:
     ports:
       - 8080:8080
     entrypoint:
-      sh -c "pip install -r requirements.txt && apk add ffmpeg && celery -A tasks.download_torrents worker --loglevel=INFO"
+      sh -c "pip install -r requirements.txt && apk add ffmpeg && celery -A tasks.download_torrents worker --beat --loglevel=INFO"
+      # sh -c "pip install -r requirements.txt && apk add ffmpeg && tail -f /dev/null"
     volumes:
       - ./celery/:/home/celery
       - /home/nramadan/goinfre/tem/:/home/data/
-    # depends_on:
-    #   rabbitmq: 
-    #     condition: service_started
+    depends_on:
+      rabbitmq: 
+        condition: service_started
+      redis:
+        condition: service_started
+  redis:
+    container_name:  redis
+    image: redis:latest
+    restart: "on-failure"
+    networks:
+      internal_net:
+    ports: 
+      - 6060:6379
+    command: redis-server --save 60 1 --loglevel warning
