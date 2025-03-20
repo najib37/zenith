@@ -3,17 +3,26 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
 import py1337x
+import logging
 
 # TODO: convert this to a class based view
 
 torrents = py1337x.Py1337x()
 
-app = Celery (
+app = Celery(
     'tasks',
-    backend='redis://localhost:6060',
-    broker="amqp://userf:userd@localhost:5672"
+    broker='amqp://userf:userd@rabbitmq:5672',
+    queue='download_torrents',
+    backend='redis://redis:6379/0',
+    task_serializer='json',
+    accept_content=['json'],
+    result_serializer='json',
+    timezone='UTC',
+    enable_utc=True,
 )
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 @api_view(['GET'])
 def search_torrents(request):
@@ -43,9 +52,7 @@ def download_torrent(request, torrent_id):
             {'error': 'Torrent ID is required'}, 
             status=status.HTTP_400_BAD_REQUEST
         )
-    
     try:
-
         info = torrents.info(torrent_id=torrent_id)
         print("________________________________");
         print(f"info {info}")
@@ -54,13 +61,14 @@ def download_torrent(request, torrent_id):
 
         result = app.send_task(
             'download_torrents',
-            args=[magnet_link, torrent_id]
+            args=[magnet_link, torrent_id],
+            queue='torrent_queue',  # Different queue name
         )
         
         return Response({
             'status': 'download_started',
-            'torrent': result.get(),
-            "info": info.to_dict()
+            'task_info': result.get(),
+            "torrent_inf": info.to_dict()
         })
     except Exception as e:
 

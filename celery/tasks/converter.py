@@ -10,8 +10,8 @@ class VideoConverter:
         self.process = None
         self.streams = {}
         self.input_file = input_file
-        self.output_path = f"{str(movie_key)}/{output_path}"
-        self.is_stated = False
+        self.output_path = f"{output_path}/{movie_key}"
+        self.is_started = False
         self.current_segment = 0
         self.duration = self.get_video_duration(input_file)
         os.makedirs(f"{self.output_path}/1080/", exist_ok=True)
@@ -136,6 +136,8 @@ class VideoConverter:
             .run_async()
         ) 
         self.create_playlist()
+
+        self.is_started = True
 
         print(f"Conversion started from segment {self.current_segment}. Press Ctrl+C to pause/resume.")
 

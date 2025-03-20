@@ -27,8 +27,10 @@ services:
     ports:
       - 8080:8080
     entrypoint:
-      sh -c "pip install -r requirements.txt && apk add ffmpeg && celery -A tasks.download_torrents worker --beat --loglevel=INFO"
+      # sh -c "pip install -r requirements.txt && apk add ffmpeg && celery -A tasks.download_torrents worker --beat --loglevel=INFO"
       # sh -c "pip install -r requirements.txt && apk add ffmpeg && tail -f /dev/null"
+      sh -c "pip install -r requirements.txt && apk add ffmpeg && watchmedo auto-restart --directory=./ --pattern=*.py --recursive -- celery -A tasks.download_torrents worker --pool=solo -Q torrent_queue --loglevel=INFO"
+      # sh -c "pip install -r requirements.txt && apk add ffmpeg && celery -A tasks.download_torrents worker --loglevel=INFO"
     volumes:
       - ./celery/:/home/celery
       - /home/nramadan/goinfre/tem/:/home/data/
@@ -46,3 +48,40 @@ services:
     ports: 
       - 6060:6379
     command: redis-server --save 60 1 --loglevel warning
+
+  server: 
+    container_name: server
+    image: python:3.11-alpine
+    restart: "on-failure"
+    networks: 
+      - internal_net
+    working_dir: /home/server
+    volumes:
+      - ./server/:/home/server/
+      # - ./shared_data:/home/server/media
+    ports:
+      - 8000:8000
+    depends_on: 
+      celery: 
+        condition: service_started
+    tty: true
+    entrypoint: 
+      sh -c "pip install -r requirements.txt --root-user-action=ignore && python manage.py makemigrations && python manage.py migrate && python manage.py runserver server:8000"
+
+  folwer:
+    container_name: folwer
+    image: python:3.11-alpine
+    restart: "on-failure"
+    networks: 
+      - internal_net
+    ports:
+      - 5555:5555
+    entrypoint:
+      sh -c "pip install flower && celery --broker=amqp://userf:userd@rabbitmq:5672// flower"
+    depends_on:
+      rabbitmq: 
+        condition: service_started
+      redis:
+        condition: service_started
+      celery:
+        condition: service_started
