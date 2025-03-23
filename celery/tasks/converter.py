@@ -41,12 +41,11 @@ class ConverterStatus(Enum):
 
 class Stream:
 
-    def __init__(self, input_file, output_path):
+    def __init__(self, input_file, output_path, resolution):
         self.status = ConverterStatus.IDLE
         self.segment = 0
         self.process = None
         self.start_time = 0
-
         self.input_file = input_file
         self.output_path = output_path
 
@@ -80,9 +79,10 @@ class Stream:
             )
             .run_async()
         )
+
         self.status = ConverterStatus.CONVERTING
 
-    def init(self):
+    def create(self):
         # TODO: create the palylist with zero segments
         pass
 
@@ -99,31 +99,9 @@ class Stream:
             self.status = ConverterStatus.DONE
 
     def pause(self):
-        print("_" * 100)
-        print("_" * 100)
-        print("_" * 100)
-        print("_" * 100)
-        print("attempting to pause")
-        print("_" * 100)
-        print("_" * 100)
-        print("_" * 100)
-        print("_" * 100)
-
-        print(f"Process: {self.process}")
-        print(f"Process status: {self.status}")
-
         if self.status != ConverterStatus.CONVERTING:
             return
         if self.process and self.process.pid:
-            print("_" * 100)
-            print("_" * 100)
-            print("_" * 100)
-            print("_" * 100)
-            print("Killing process")
-            print("_" * 100)
-            print("_" * 100)
-            print("_" * 100)
-            print("_" * 100)
             os.kill(self.process.pid, signal.SIGSTOP)
         self.status = ConverterStatus.PAUSED
 
@@ -146,14 +124,39 @@ class VideoConverter:
         os.makedirs(f"{self.output_path}/720/", exist_ok=True)
         os.makedirs(f"{self.output_path}/144/", exist_ok=True)
 
+    def check_severe_corruption(
+        self,
+        video_path,
+        start_time="00:00:00",
+        chunk_duration="00:00:10",
+        bytestream_threshold=-6,
+    ):
+        process = (
+            ffmpeg.input(video_path, ss=start_time)
+            .output("null", format="null", t=chunk_duration)
+            .global_args("-v", "error", "-xerror")  # BUG: -xerror
+            .run_async(pipe_stdout=True, pipe_stderr=True, quiet=True)
+        )
+
+        _, stderr = process.communicate()
+        for line in stderr.decode("utf-8").splitlines():
+            print("==" * 50)
+            print(line)
+            print("==" * 50)
+            if "error while decoding MB" in line:
+                bytestream_val = int(line.split("bytestream")[-1])
+                if bytestream_val < bytestream_threshold:
+                    return True
+        return False
+
     def start_conversion(self):
         # self.create_playlist()
 
-        if (self.status == ConverterStatus.CONVERTING or not self.is_ready_to_convert()):
+        if self.status == ConverterStatus.CONVERTING or not self.is_ready_to_convert():
             return
 
         for res in VideoResulotion:
-            stream = Stream(self.input_file, self.output_path)
+            stream = Stream(self.input_file, self.output_path, res)
             stream.start(res)
             self.streams[res.prefix] = stream
         self.status = ConverterStatus.CONVERTING
