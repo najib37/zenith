@@ -168,8 +168,6 @@ def cleanup_on_shutdown(**kwargs):
     queue="torrent_queue",
 )
 def download_torrents(magnet_link, movie_key):
-    # global torrent_donloader
-
     torrent_downloader = TorrentDownloader.get_instance()
 
     try:
@@ -177,18 +175,6 @@ def download_torrents(magnet_link, movie_key):
         return info
     except TorrentTimeoutError as e:
         raise  # This will propagate directly to the client
-
-    torrent_downloader = TorrentDownloader.get_instance()
-
-    print("+-" * 100) 
-    print("+-" * 100)
-    for key, job in torrent_downloader.jobs.items():
-        print(f"key: {key} - job: {job}")
-    print("+-" * 100)
-    print("+-" * 100)
-
-    info = torrent_downloader.add_torrent(magnet_link, movie_key)
-    return info
 
 
 @app.task(
@@ -199,9 +185,7 @@ def download_torrents(magnet_link, movie_key):
     # raise_on_duplicate=False
 )
 def process_jobs():
-    a = 0
     torrent_downloader = TorrentDownloader.get_instance()
-
     while len(torrent_downloader.jobs) > 0:
         print("dora ---------------------------------")
 
@@ -210,59 +194,57 @@ def process_jobs():
         for key, job in torrent_downloader.jobs.items():
             handler, converter = job.values()
 
-            if not handler.status().paused and handler.status().progress >= 0.1:
-                print("=" * 100)
-                print("=" * 100)
-                print("Pause download")
-                print("=" * 100)
-                print("=" * 100)
-                handler.pause()
+            converter.update_none_corupt_duration()
+
+            print("=" * 100)
+            print("=" * 100)
+            print(f"non corupt: {converter.none_corupt_duration}")
+            print(f"Downloading:{handler.status().progress * 100}% - Download Rate:{handler.status().download_rate / 1024}KB/s")
+            print("=" * 100)
+            print("=" * 100)
+            
+            # fully downoaded pause download
+            # if not handler.status().paused and handler.status().progress >= 0.1:
+            #     print("=" * 100)
+            #     print("=" * 100)
+            #     print("Pause download")
+            #     print("=" * 100)
+            #     print("=" * 100)
+            #     handler.pause()
 
             # full downloaded and converted job completed
-            if handler.status().is_finished and converter.status == ConverterStatus.DONE:
-                print("_" * 100)
-                print("_" * 100)
-                print("downloaded and converted")
-                print("_" * 100)
-                print("_" * 100)
-                converter.stop_conversion()
-                del torrent_downloader.jobs[key]
-                continue
+            # if handler.status().is_finished and converter.status == ConverterStatus.DONE:
+            #     print("_" * 100)
+            #     print("_" * 100)
+            #     print("downloaded and converted")
+            #     print("_" * 100)
+            #     print("_" * 100)
+            #     converter.stop_conversion()
+            #     del torrent_downloader.jobs[key]
+            #     continue
 
             # init conversion
-            if handler.status().downloading and converter.status == ConverterStatus.IDLE:
+            # if handler.status().downloading and converter.status == ConverterStatus.IDLE:
+            if handler.status().downloading:
                 print("_" * 100)
                 print("_" * 100)
                 print("Start conversion")
                 print("_" * 100)
                 print("_" * 100)
                 converter.start_conversion()
-            #
-            # # full downloaded but not converted
+
+            # full downloaded but not converted
             # if handler.status().is_finished and converter.status != ConverterStatus.CONVERTING:
             #     continue
-            #
-            # # download paused pause conversion 
+
+            # download paused pause conversion 
             # if handler.status().paused and converter.status == ConverterStatus.CONVERTING:
             #     converter.pause_conversion()
 
-            print(f"Downloading: {handler.status().progress * 100}% - Download Rate: {handler.status().download_rate / 1024} KB/s")
 
             sleep(1)
-
-        # a += 1
-        # if a > 10:
-        #     break
 
     return {
         "status": "done",
         "code": 200,
     }
-
-
-# @app.task(name='get_torrent_info')
-# def get_torrent_info(movie_key):
-#     global torrent_downloader
-#     if not torrent_downloader: return {}
-#     info = torrent_downloader.get_torrent_info(movie_key)
-#     return info

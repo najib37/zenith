@@ -3,7 +3,7 @@ import json
 import os
 import signal
 from enum import Enum
-from time import sleep
+from time import sleep, time
 
 import ffmpeg
 
@@ -25,7 +25,6 @@ class VideoResulotion(Enum):
         self.height = height
         self.bitrate = bitrate
         # self.status = ConverterStatus.IDLE
-        self.segment = 0
 
 
 class ConverterStatus(Enum):
@@ -39,39 +38,74 @@ class ConverterStatus(Enum):
         self.status = status
 
 
+def convert_time(sec):
+    return f"{int(sec //3600):02d}:{int((sec%3600)//60):02d}:{int(sec%60):02d}"
+
+
 class Stream:
 
-    def __init__(self, input_file, output_path, resolution):
+    def __init__(self, input_file, output_path, resulotion, none_corupt_duration=0):
         self.status = ConverterStatus.IDLE
-        self.segment = 0
-        self.process = None
-        self.start_time = 0
         self.input_file = input_file
         self.output_path = output_path
+        self.resulotion = resulotion
+        self.none_corupt_duration = none_corupt_duration
 
-    def start(self, res: VideoResulotion):
+        self.process = None
+        self.current_segment = 0
+        self.segment_duration = 0
+        self.start_time = 0
 
-        if self.status == ConverterStatus.CONVERTING:
+    def calculate__segment(self):
+        pass
+
+    def attempt_restart(self, new_none_corupt_duration):
+        if self.is_running():
             return
+
+        self.start_time = self.none_corupt_duration
+        self.none_corupt_duration = new_none_corupt_duration - self.none_corupt_duration
+        self.start()
+
+    # def time_convert(self, sec):
+    #     return time.strftime("%H:%M:%S", time.gmtime(sec))
+
+    def start(self):
+
+        if self.is_running():
+            return
+
+        playlist_path = f"{self.output_path}/{self.resulotion.prefix}/{self.resulotion.prefix}.m3u8"
+        if os.path.exists(playlist_path):
+            with open(playlist_path, 'r') as f:
+                content = f.read()
+                # Find the last segment number from the existing playlist
+                import re
+                segments = re.findall(r'_(\d{3}).ts', content)
+                if segments:
+                    self.current_segment = max(int(num) for num in segments)
+
         self.process = (
             ffmpeg.input(self.input_file, ss=self.start_time)
-            .filter("scale", res.width, res.height)
+            .filter("scale", self.resulotion.width, self.resulotion.height)
             .output(
-                f"{self.output_path}/{res.prefix}/{res.prefix}.m3u8",
+                f"{self.output_path}/{self.resulotion.prefix}/{self.resulotion.prefix}.m3u8",
+                t=convert_time(self.none_corupt_duration),
                 format="hls",
                 hls_time=10,
                 hls_list_size=0,
-                hls_segment_filename=f"{self.output_path}/{res.prefix}/{res.prefix}_%03d.ts",
-                hls_flags="independent_segments",
-                start_number=0,
+                hls_segment_filename=f"{self.output_path}/{self.resulotion.prefix}/{self.resulotion.prefix}_%03d.ts",
+                hls_flags="independent_segments+append_list",  # Add append_list flag
+                # hls_flags="independent_segments",
+                start_number=self.current_segment,
                 vcodec="libx264",
                 acodec="aac",
                 preset="fast",
                 tune="film",
                 crf=23,
                 threads=4,
-                video_bitrate=res.bitrate,
-                maxrate=res.bitrate,
+                video_bitrate=self.resulotion.bitrate,
+                maxrate=self.resulotion.bitrate,
                 bufsize="6M",
                 audio_bitrate="192k",
                 level="4.0",
@@ -80,37 +114,42 @@ class Stream:
             .run_async()
         )
 
-        self.status = ConverterStatus.CONVERTING
+        # self.current_segment = self.current_segment + self.none_corupt_duration // 10
 
-    def create(self):
-        # TODO: create the palylist with zero segments
-        pass
+        # self.status = ConverterStatus.CONVERTING
 
-    def stop(self):
-        if self.status != ConverterStatus.CONVERTING:
-            return
-        if self.process and self.process.pid:
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=10)
-            except TimeoutError:
-                print(f"Stream took too long to stop, forcing kill")
-                return
-            self.status = ConverterStatus.DONE
+    def is_running(self):
+        return self.process and self.process.pid and self.process.poll() is None
 
-    def pause(self):
-        if self.status != ConverterStatus.CONVERTING:
-            return
-        if self.process and self.process.pid:
-            os.kill(self.process.pid, signal.SIGSTOP)
-        self.status = ConverterStatus.PAUSED
-
-    def resume(self):
-        if self.status != ConverterStatus.PAUSED:
-            return
-        if self.process and self.process.pid:
-            os.kill(self.process.pid, signal.SIGCONT)
-        self.status = ConverterStatus.CONVERTING
+    # def create(self):
+    #     # TODO: create the palylist with zero segments
+    #     pass
+    #
+    # def stop(self):
+    #     if self.status != ConverterStatus.CONVERTING:
+    #         return
+    #     if self.process and self.process.pid:
+    #         self.process.terminate()
+    #         try:
+    #             self.process.wait(timeout=10)
+    #         except TimeoutError:
+    #             print(f"Stream took too long to stop, forcing kill")
+    #             return
+    #         self.status = ConverterStatus.DONE
+    #
+    # def pause(self):
+    #     if self.status != ConverterStatus.CONVERTING:
+    #         return
+    #     if self.process and self.process.pid:
+    #         os.kill(self.process.pid, signal.SIGSTOP)
+    #     self.status = ConverterStatus.PAUSED
+    #
+    # def resume(self):
+    #     if self.status != ConverterStatus.PAUSED:
+    #         return
+    #     if self.process and self.process.pid:
+    #         os.kill(self.process.pid, signal.SIGCONT)
+    #     self.status = ConverterStatus.CONVERTING
 
 
 class VideoConverter:
@@ -119,6 +158,7 @@ class VideoConverter:
         self.input_file = input_file
         self.output_path = f"{output_path}/{movie_key}"
         self.duration = self.get_video_duration(input_file)
+        self.none_corupt_duration = 0
         self.status = ConverterStatus.IDLE
         os.makedirs(f"{self.output_path}/1080/", exist_ok=True)
         os.makedirs(f"{self.output_path}/720/", exist_ok=True)
@@ -126,40 +166,51 @@ class VideoConverter:
 
     def check_severe_corruption(
         self,
-        video_path,
         start_time="00:00:00",
-        chunk_duration="00:00:10",
+        chunk_duration="00:00:20",
         bytestream_threshold=-6,
     ):
+
+        # start_time = ffmpeg.parse_time(start_time)
+
         process = (
-            ffmpeg.input(video_path, ss=start_time)
+            ffmpeg.input(self.input_file, ss=start_time)
             .output("null", format="null", t=chunk_duration)
             .global_args("-v", "error", "-xerror")  # BUG: -xerror
             .run_async(pipe_stdout=True, pipe_stderr=True, quiet=True)
         )
 
+        process.wait()
         _, stderr = process.communicate()
         for line in stderr.decode("utf-8").splitlines():
-            print("==" * 50)
+            print("**" * 50)
             print(line)
-            print("==" * 50)
+            print("**" * 50)
             if "error while decoding MB" in line:
                 bytestream_val = int(line.split("bytestream")[-1])
                 if bytestream_val < bytestream_threshold:
                     return True
         return False
 
+    def update_none_corupt_duration(self):
+
+        if not self.check_severe_corruption(convert_time(self.none_corupt_duration), "00:01:00"):
+            self.none_corupt_duration = self.none_corupt_duration + 60
+
     def start_conversion(self):
         # self.create_playlist()
 
-        if self.status == ConverterStatus.CONVERTING or not self.is_ready_to_convert():
+        if not self.is_ready_to_convert() or self.none_corupt_duration == 0:
             return
 
         for res in VideoResulotion:
+            if res.prefix in self.streams:
+                self.streams[res.prefix].attempt_restart(self.none_corupt_duration)
+                continue
             stream = Stream(self.input_file, self.output_path, res)
-            stream.start(res)
+            stream.attempt_restart(self.none_corupt_duration)
             self.streams[res.prefix] = stream
-        self.status = ConverterStatus.CONVERTING
+        # self.status = ConverterStatus.CONVERTING
 
     def pause_conversion(self):
         print("Pause conversion")
