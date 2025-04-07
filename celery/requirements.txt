@@ -21,3 +21,4 @@ m3u8
 celery-singleton
 watchdog
 python-ffmpeg==2.0.12
+gevent

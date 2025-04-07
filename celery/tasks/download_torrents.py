@@ -5,7 +5,8 @@ from time import sleep
 import libtorrent as lt
 from celery.signals import worker_process_init, worker_shutdown
 from celery_singleton import Singleton
-from tasks.converter import ConverterStatus, VideoConverter, VideoResulotion
+# from tasks.converter import ConverterStatus, VideoConverter, VideoResulotion
+from tasks.conr import Converter
 
 from celery import Celery
 
@@ -80,6 +81,10 @@ class TorrentDownloader:
 
     def add_torrent(self, magnet_link, movie_key):
         if movie_key in self.jobs:
+            # process_jobs.delay()
+            # conversion_task.apply_async(movie_key)
+
+            conversion_task.delay(movie_key)
             return {
                 "status": "torrent_already_added",
                 "code": 200,
@@ -115,8 +120,6 @@ class TorrentDownloader:
             "converter": converter,
         }
 
-        process_jobs.delay()
-
         formated_metadata = {
             "status": "torrent_added_success",
             "code": 200,
@@ -124,14 +127,18 @@ class TorrentDownloader:
             "info": self.get_info_from_handle(handle),
         }
 
+        conversion_task.delay(movie_key)
+        # process_jobs.delay()
+
         print(f"Added torrent: {movie_key}")
+
         return formated_metadata
 
     def post_process(self, movie_key, movie_info):
         match str(movie_info["type"]):
             case "video/x-matroska":
-                converter = VideoConverter(
-                    movie_info["path"], "/home/data/movies/outs", movie_key
+                converter = Converter(
+                    movie_info["path"], f"/home/data/movies/outs/{movie_key}"
                 )
                 return converter
             case "video/mp4":
@@ -164,6 +171,48 @@ def cleanup_on_shutdown(**kwargs):
             handler.pause()
 
 @app.task(
+    name="convert_video",
+    queue="torrent_queue"
+)
+def conversion_task(movie_key):
+    torrent_downloader = TorrentDownloader.get_instance()
+
+    # return {}
+
+    # while True:
+    #     sleep(1)
+    #     print("dora ---------------------------------")
+
+    print("+" * 20)
+    print("+" * 20)
+    print("process jobs")
+    print(f"torent {torrent_downloader}")
+    print(f"torent {len(torrent_downloader.jobs.items())}")
+    for j in torrent_downloader.jobs.items():
+        print(j)
+    print("+" * 20)
+    print("+" * 20)
+    if movie_key not in torrent_downloader.jobs:
+        return {
+            "status": "movie_key_not_found",
+            "code": 404,
+        }
+
+    handler, converter = torrent_downloader.jobs[movie_key].values()
+
+    converter.start_conversion(handler)
+    print("dora ---------------------------------")
+    print("dora ---------------------------------")
+    print("start conversion")
+    print("dora ---------------------------------")
+    print("dora ---------------------------------")
+
+    return {
+        "status": "done",
+        "code": 200,
+    }
+
+@app.task(
     name="download_torrents",
     queue="torrent_queue",
 )
@@ -179,22 +228,36 @@ def download_torrents(magnet_link, movie_key):
 
 @app.task(
     name="process_jobs",
-    base=Singleton,
+    # base=Singleton,
     queue="torrent_queue",
     # lock_expiry=60,
     # raise_on_duplicate=False
 )
 def process_jobs():
     torrent_downloader = TorrentDownloader.get_instance()
+
+    print("+" * 20)
+    print("+" * 20)
+    print("process jobs")
+    print(f"torent {torrent_downloader}")
+    print(f"torent {len(torrent_downloader.jobs.items())}")
+    for j in torrent_downloader.jobs.items():
+        print(j)
+    print("+" * 20)
+    print("+" * 20)
+
+    return {}
+
     while len(torrent_downloader.jobs) > 0:
         print("dora ---------------------------------")
 
-        return {}
+
 
         for key, job in torrent_downloader.jobs.items():
             handler, converter = job.values()
 
-            converter.update_none_corupt_duration()
+            # converter.update_none_corupt_duration()
+            converter.start_conversion()
 
             print("=" * 100)
             print("=" * 100)
@@ -202,7 +265,7 @@ def process_jobs():
             print(f"Downloading:{handler.status().progress * 100}% - Download Rate:{handler.status().download_rate / 1024}KB/s")
             print("=" * 100)
             print("=" * 100)
-            
+
             # fully downoaded pause download
             # if not handler.status().paused and handler.status().progress >= 0.1:
             #     print("=" * 100)

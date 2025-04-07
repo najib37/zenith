@@ -32,7 +32,10 @@ services:
     entrypoint:
     #   # sh -c "pip install -r requirements.txt && apk add ffmpeg && celery -A tasks.download_torrents worker --beat --loglevel=INFO"
     #   # sh -c "pip install -r requirements.txt && apk add ffmpeg && tail -f /dev/null"
-      sh -c "watchmedo auto-restart --directory=./ --pattern=*.py --recursive -- celery -A tasks.download_torrents worker --pool=solo -Q torrent_queue --loglevel=INFO"
+    #
+      # sh -c "watchmedo auto-restart --directory=./ --pattern=*.py --recursive -- celery -A tasks.download_torrents worker --pool=solo -Q torrent_queue --loglevel=INFO"
+
+      sh -c "watchmedo auto-restart --directory=./ --pattern=*.py --recursive -- celery -A tasks.download_torrents worker -Q torrent_queue --loglevel=INFO -c 20 --pool=threads"
       # sh -c "pip install -r requirements.txt && apk add ffmpeg && celery -A tasks.download_torrents worker --loglevel=INFO"
     volumes:
       - ./celery/:/home/celery
