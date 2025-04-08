@@ -3,6 +3,7 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
 import py1337x
+from py1337x.types import category, sort, order
 import logging
 
 # TODO: convert this to a class based view
@@ -24,6 +25,15 @@ app = Celery(
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+async def get_torrent_info(torrent_id):
+    try:
+        info = torrents.info(torrent_id=torrent_id).to_dict()
+        return info
+    except Exception as e:
+        logger.error(f"Error fetching torrent info: {e}")
+        return None
+
+
 @api_view(['GET'])
 def search_torrents(request):
     movie_name = request.query_params.get('q', '')
@@ -34,11 +44,29 @@ def search_torrents(request):
         )
     
     try:
-        results = torrents.search(f"{movie_name} 1080", sort_by=py1337x.sort.SEEDERS).to_dict()
+        results = torrents.search(f"{movie_name} 1080", sort_by=py1337x.sort.SEEDERS, category=category.MOVIES).to_dict()
+        keys = [results['items'][i]['torrent_id'] for i in range(len(results['items']))]
+        info = [ torrents.info(torrent_id=key) for key in keys]
+        magnets = [magnet.magnet_link for magnet in info]
+
+        task = app.send_task(
+            'get_torrent_multi_info',
+            args=[magnets],
+            queue='torrent_queue',  # Different queue name
+        )
+        info = task.get()
+
         return Response({
             'query': movie_name,
-            'results': results['items'][:2] if results else []
+            'info': info,
+            'results': results['items'] if results else []
         })
+    
+
+    #     return Response({
+    #         'query': movie_name,
+    #         'results': results['items'] if results else []
+    #     })
     except Exception as e:
         return Response(
             {'error': str(e)}, 
@@ -59,15 +87,15 @@ def download_torrent(request, torrent_id):
         print("________________________________");
         magnet_link = info.magnet_link
 
-        result = app.send_task(
-            'download_torrents',
-            args=[magnet_link, torrent_id],
-            queue='torrent_queue',  # Different queue name
-        )
+        # result = app.send_task(
+        #     'download_torrents',
+        #     args=[magnet_link, torrent_id],
+        #     queue='torrent_queue',  # Different queue name
+        # )
         
         return Response({
             'status': 'download_started',
-            'task_info': result.get(),
+            # 'task_info': result.get(),
             "torrent_inf": info.to_dict()
         })
     except Exception as e:

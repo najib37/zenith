@@ -1,14 +1,14 @@
 import mimetypes
 from time import sleep
 
-# from celery.utils import time
 import libtorrent as lt
+import py1337x
+from celery import Celery, group
 from celery.signals import worker_process_init, worker_shutdown
-from celery_singleton import Singleton
-# from tasks.converter import ConverterStatus, VideoConverter, VideoResulotion
+from py1337x.types import category, order, sort
+
 from tasks.conr import Converter
 
-from celery import Celery
 
 class TorrentTimeoutError(Exception):
     pass
@@ -42,8 +42,38 @@ class TorrentDownloader:
         self.session = lt.session()
         self.session.add_extension("ut_metadata")
         self.session.add_extension("ut_pex")
+        self.searcher = py1337x.Py1337x()
 
         self.jobs = {}
+
+    def get_metadata(self, handle, timeout=10):
+        time = 0
+        while not handle.status().has_metadata:
+            if time > timeout:
+                raise TorrentTimeoutError("Torrent metadata download timeout")
+            # TODO: add cleanup and use celery sleep
+            sleep(0.5)
+            time += 0.5
+
+    def get_metadata_sync(self, handle, timeout=10):
+        time = 0
+        while not handle.status().has_metadata:
+            if time > timeout:
+                return False
+            sleep(0.5)
+            time += 0.5
+        return True
+
+    def temp_add_torrent(self, magnet_link):
+        params = lt.parse_magnet_uri(magnet_link)
+        params.save_path = "/home/data/movies/"
+        params.storage_mode = lt.storage_mode_t.storage_mode_allocate
+        handle = self.session.add_torrent(params)
+        handle.set_flags(lt.torrent_flags.sequential_download)
+        handle.pause()
+
+        return handle
+
 
     def get_info_from_handle(self, handle):
         self.get_metadata(handle)
@@ -64,14 +94,6 @@ class TorrentDownloader:
         }
         return info
 
-    def get_metadata(self, handle):
-        time = 0
-        while not handle.status().has_metadata:
-            if time > 10:
-                raise TorrentTimeoutError("Torrent metadata download timeout")
-            # TODO: add cleanup and use celery sleep
-            sleep(0.5)
-            time += 0.5
 
     def set_mime_types(self):
         mimetypes.init()
@@ -82,7 +104,7 @@ class TorrentDownloader:
     def add_torrent(self, magnet_link, movie_key):
         if movie_key in self.jobs:
             # process_jobs.delay()
-            # conversion_task.apply_async(movie_key)
+            conversion_task.delay(movie_key)
 
             conversion_task.delay(movie_key)
             return {
@@ -104,7 +126,6 @@ class TorrentDownloader:
         files = [
             {
                 "path": f"{full_path}/{f.path}",
-                # "path": "/home/data/hls/na.mkv",
                 "size": f.size,
                 "type": mimetypes.guess_type(f.path)[0],
             }
@@ -134,6 +155,8 @@ class TorrentDownloader:
 
         return formated_metadata
 
+
+
     def post_process(self, movie_key, movie_info):
         match str(movie_info["type"]):
             case "video/x-matroska":
@@ -145,9 +168,6 @@ class TorrentDownloader:
                 pass
             case _:
                 pass
-
-    def get_jobs(self):
-        return self.jobs
 
 
 @worker_process_init.connect
@@ -163,12 +183,82 @@ def cleanup_on_shutdown(**kwargs):
     # global torrent_downloader
 
     torrent_downloader = TorrentDownloader.get_instance()
-    if torrent_downloader:
-        torrent_downloader.session.pause()
-        for _, job in torrent_downloader.jobs.items():
-            handler, converter = job.values()
-            converter.stop_conversion()
-            handler.pause()
+    if not torrent_downloader:
+        return
+
+    torrent_downloader.session.pause()
+    for _, job in torrent_downloader.jobs.items():
+        handler, converter = job.values()
+        converter.stop_conversion()
+        handler.pause()
+
+@app.task(
+    name="get_torrent_info",
+    queue="torrent_queue"
+)
+def get_torrent_info_task(magnet_link):
+    torrent_downloader = TorrentDownloader.get_instance()
+
+    print(f"get_torrent_info_task {magnet_link}")
+    try:
+        handle = torrent_downloader.temp_add_torrent(magnet_link)
+        result = torrent_downloader.get_metadata_sync(handle)
+        return handle.status().name if result else None
+    except TorrentTimeoutError as e:
+        raise
+
+@app.task(
+    name="get_metadata",
+    queue="torrent_queue",
+)
+def get_metadata_task(links):
+    try:
+        task_group = group(get_torrent_info_task.s(link) for link in links)
+        result = task_group.apply_async()
+        return result.get()
+    except TorrentTimeoutError as e:
+        raise
+
+@app.task(
+    name="get_torrent_multi_info",
+    queue="torrent_queue"
+)
+def get_torrent_multi_info_task(magnet_links):
+    try:
+        task_group = group(get_torrent_info_task.s(link) for link in magnet_links)
+        result = task_group.apply_async()
+        info = result.get(disable_sync_subtasks=False)
+        return info
+    except TorrentTimeoutError as e:
+        raise
+
+# @app.task(
+#     name="get_movie_info",
+#     queue="torrent_queue"
+# )
+# def get_movie_info_task(torrent_id):
+#     torrent_downloader = TorrentDownloader.get_instance()
+#     try:
+#         result = torrent_downloader.searcher.info(torrent_id=torrent_id)
+#
+#     except TorrentTimeoutError as e:
+#         raise
+#
+# @app.task(
+#     name="search_movies",
+#     queue="torrent_queue"
+# )
+# def search_movies_task(movie_name):
+#     torrent_downloader = TorrentDownloader.get_instance()
+#     try:
+#         results = torrent_downloader.searcher.search(f"{movie_name} 1080", sort_by=py1337x.sort.SEEDERS, category=category.MOVIES).to_dict()
+#         keys = [results['items'][i]['torrent_id'] for i in range(len(results['items']))]
+#         info = [ torrents.info(torrent_id=key) for key in keys]
+#         magnets = [magnet.magnet_link for magnet in info]
+#         return results
+#     except TorrentTimeoutError as e:
+#         raise
+
 
 @app.task(
     name="convert_video",
@@ -179,19 +269,6 @@ def conversion_task(movie_key):
 
     # return {}
 
-    # while True:
-    #     sleep(1)
-    #     print("dora ---------------------------------")
-
-    print("+" * 20)
-    print("+" * 20)
-    print("process jobs")
-    print(f"torent {torrent_downloader}")
-    print(f"torent {len(torrent_downloader.jobs.items())}")
-    for j in torrent_downloader.jobs.items():
-        print(j)
-    print("+" * 20)
-    print("+" * 20)
     if movie_key not in torrent_downloader.jobs:
         return {
             "status": "movie_key_not_found",
@@ -201,11 +278,6 @@ def conversion_task(movie_key):
     handler, converter = torrent_downloader.jobs[movie_key].values()
 
     converter.start_conversion(handler)
-    print("dora ---------------------------------")
-    print("dora ---------------------------------")
-    print("start conversion")
-    print("dora ---------------------------------")
-    print("dora ---------------------------------")
 
     return {
         "status": "done",
@@ -218,7 +290,6 @@ def conversion_task(movie_key):
 )
 def download_torrents(magnet_link, movie_key):
     torrent_downloader = TorrentDownloader.get_instance()
-
     try:
         info = torrent_downloader.add_torrent(magnet_link, movie_key)
         return info
@@ -226,27 +297,27 @@ def download_torrents(magnet_link, movie_key):
         raise  # This will propagate directly to the client
 
 
-@app.task(
-    name="process_jobs",
-    # base=Singleton,
-    queue="torrent_queue",
-    # lock_expiry=60,
-    # raise_on_duplicate=False
-)
-def process_jobs():
-    torrent_downloader = TorrentDownloader.get_instance()
-
-    print("+" * 20)
-    print("+" * 20)
-    print("process jobs")
-    print(f"torent {torrent_downloader}")
-    print(f"torent {len(torrent_downloader.jobs.items())}")
-    for j in torrent_downloader.jobs.items():
-        print(j)
-    print("+" * 20)
-    print("+" * 20)
-
-    return {}
+# @app.task(
+#     name="process_jobs",
+#     # base=Singleton,
+#     queue="torrent_queue",
+#     # lock_expiry=60,
+#     # raise_on_duplicate=False
+# )
+# def process_jobs():
+#     torrent_downloader = TorrentDownloader.get_instance()
+#
+#     print("+" * 20)
+#     print("+" * 20)
+#     print("process jobs")
+#     print(f"torent {torrent_downloader}")
+#     print(f"torent {len(torrent_downloader.jobs.items())}")
+#     for j in torrent_downloader.jobs.items():
+#         print(j)
+#     print("+" * 20)
+#     print("+" * 20)
+#
+#     return {}
 
     while len(torrent_downloader.jobs) > 0:
         print("dora ---------------------------------")
