@@ -44,36 +44,38 @@ class Converter:
             if not process:
                 print("FFmpeg process not running.")
                 return
-            size = self.get_dir_size(f"{self.output_path}/1080")
-            donloaded = handle.status().total_done
-            print("+" * 20)
-            print("+" * 20)
-            print(f"size: {size}")
+            converted_size = self.get_dir_size(f"{self.output_path}/1080")
+            donloaded_size = handle.status().total_done
+            print("~" * 20)
+            print("~" * 20)
+            print(f"size: {converted_size}")
             print("Progress: ", progress)
             print(f"filename: {self.input_file}")
             print(f"Downloading:{handle.status().progress * 100}% - Download Rate:{handle.status().download_rate / 1024}KB/s")
-            print(f"Downloaded {donloaded / (1024 * 1024)}MB {donloaded}")
-            print("+" * 20)
-            print("+" * 20)
-            # if size - (donloaded * 0.1) >= donloaded: 
-            #     process.send_signal(SIGSTOP)
-            #     print("FFmpeg process paused.")
-            #     sleep(10)
-            #     # return
+            print(f"Downloaded {donloaded_size / (1024 * 1024)}MB {donloaded_size} bytes")
+            print("~" * 20)
+            print("~" * 20)
+            if converted_size  >= donloaded_size + (donloaded_size * 0.1): 
+                process.send_signal(SIGSTOP)
+                while converted_size  >= donloaded_size + (donloaded_size * 0.1): 
+                    print("Waiting for download to catch up...")
+                    sleep(1)
+            process.send_signal(SIGCONT)
+
+    def wait_file_creation(self, file, timeout=10):
+        while not os.path.exists(file):
+            # if timeout <= 0:
             #
-            # print("+" * 20)
-            # print("+" * 20)
-            # print("FFmpeg process resumed.")
-            # print("+" * 20)
-            # print("+" * 20)
-            # process.send_signal(SIGCONT)
+            # timeout -= 1
+            sleep(1)
 
     def start_conversion(self, handler):
         if self.ffmpeg is not None:
-            # print("FFmpeg process already initialized.")
+            print("FFmpeg process already initialized.")
             return
-        sleep(10)
         try:
+            # self.wait_file_creation(self.input_file)
+            sleep(5)
             self.ffmpeg = (
                 FFmpeg()
                 .option('y')  # Overwrite output files

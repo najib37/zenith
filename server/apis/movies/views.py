@@ -44,14 +44,17 @@ def search_torrents(request):
         )
     
     try:
-        results = torrents.search(f"{movie_name} 1080", sort_by=py1337x.sort.SEEDERS, category=category.MOVIES).to_dict()
-        keys = [results['items'][i]['torrent_id'] for i in range(len(results['items']))]
-        info = [ torrents.info(torrent_id=key) for key in keys]
-        magnets = [magnet.magnet_link for magnet in info]
+        # results = torrents.search(f"{movie_name} 1080", sort_by=py1337x.sort.SEEDERS, category=category.MOVIES).to_dict()
+        # keys = [results['items'][i]['torrent_id'] for i in range(len(results['items']))]
+        # info = [ torrents.info(torrent_id=key) for key in keys]
+        # magnets = [magnet.magnet_link for magnet in info]
+
+
 
         task = app.send_task(
-            'get_torrent_multi_info',
-            args=[magnets],
+            'download_movie_task',
+            args=[movie_name],
+            retry=False,
             queue='torrent_queue',  # Different queue name
         )
         info = task.get()
@@ -59,7 +62,7 @@ def search_torrents(request):
         return Response({
             'query': movie_name,
             'info': info,
-            'results': results['items'] if results else []
+            # 'results': results['items'] if results else []
         })
     
 
@@ -72,6 +75,7 @@ def search_torrents(request):
             {'error': str(e)}, 
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
 
 @api_view(['GET'])
 def download_torrent(request, torrent_id):
@@ -87,15 +91,16 @@ def download_torrent(request, torrent_id):
         print("________________________________");
         magnet_link = info.magnet_link
 
-        # result = app.send_task(
-        #     'download_torrents',
-        #     args=[magnet_link, torrent_id],
-        #     queue='torrent_queue',  # Different queue name
-        # )
+        result = app.send_task(
+            'download_torrents',
+            args=[magnet_link, torrent_id],
+            retry=False,
+            queue='torrent_queue',  # Different queue name
+        )
         
         return Response({
             'status': 'download_started',
-            # 'task_info': result.get(),
+            'task_info': result.get(),
             "torrent_inf": info.to_dict()
         })
     except Exception as e:
