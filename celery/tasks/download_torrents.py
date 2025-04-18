@@ -8,6 +8,7 @@ import py1337x
 from celery import Celery, group
 from celery.signals import worker_process_init, worker_shutdown
 from py1337x.types import category, order
+import requests
 
 from tasks.conr import Converter
 
@@ -113,6 +114,7 @@ class TorrentDownloader:
                     "is_finished": status.is_finished,
                     "is_seed": status.is_seeding,
                     "file": {
+                        "name": biggest_file.path,
                         "path": f"/home/data/movies/{biggest_file.path}",
                         "size": biggest_file.size,
                         "type": mimetypes.guess_type(biggest_file.path)[0],
@@ -307,9 +309,6 @@ def search_movies_task(movie_name):
                 "code": 404,
             }
 
-
-        print(task_result)
-
         info = sorted(
             [
                 res
@@ -333,18 +332,18 @@ def search_movies_task(movie_name):
 
     except TorrentTimeoutError as e:
         raise
-
-@app.task(
-    name="download_torrents",
-    queue="torrent_queue",
-)
-def download_torrents(magnet_link, movie_key):
-    torrent_downloader = TorrentDownloader.get_instance()
-    try:
-        info = torrent_downloader.add_torrent(magnet_link, movie_key)
-        return info
-    except TorrentTimeoutError as e:
-        raise  # This will propagate directly to the client
+#
+# @app.task(
+#     name="download_torrents",
+#     queue="torrent_queue",
+# )
+# def download_torrents(magnet_link, movie_key):
+#     torrent_downloader = TorrentDownloader.get_instance()
+#     try:
+#         info = torrent_downloader.add_torrent(magnet_link, movie_key)
+#         return info
+#     except TorrentTimeoutError as e:
+#         raise  # This will propagate directly to the client
 
 @app.task(
     name="download_movie_task",
@@ -372,17 +371,24 @@ def download_movie_task(movie_name):
 
         movie_key = result.get("movie_key")
         magnet_link = result["magnet_link"]
-        torrent_downloader.add_torrent(magnet_link, movie_key)
-        converter = torrent_downloader.jobs[movie_key]["converter"]
-        wait_file_creation(f"{converter.output_path}/144/144p.m3u8", timeout=20)
+        file_name = result["result"]["file"]["name"]
+        sub_task = download_subtitles_task.delay(file_name).get(disable_sync_subtasks=False)
+        print("+" * 20)
+        print("+" * 20)
+        print(f"Downloading movie {file_name}")
+        print("+" * 20)
+        print("+" * 20)
+        # torrent_downloader.add_torrent(magnet_link, movie_key)
+        # converter = torrent_downloader.jobs[movie_key]["converter"]
+        # wait_file_creation(f"{converter.output_path}/144/144p.m3u8", timeout=20)
+
         return {
             "status": "done",
+            "subs": sub_task,
             "code": 200,
         }
     except TorrentTimeoutError as e:
         raise
-
-
 
 @app.task(
     name="convert_video",
@@ -409,88 +415,91 @@ def conversion_task(movie_key):
         "code": 200,
     }
 
-
-    # @app.task(
-    #     name="process_jobs",
-    #     # base=Singleton,
-    #     queue="torrent_queue",
-    #     # lock_expiry=60,
-    #     # raise_on_duplicate=False
-    # )
-    # def process_jobs():
-    #     torrent_downloader = TorrentDownloader.get_instance()
-    #
-    #     print("+" * 20)
-    #     print("+" * 20)
-    #     print("process jobs")
-    #     print(f"torent {torrent_downloader}")
-    #     print(f"torent {len(torrent_downloader.jobs.items())}")
-    #     for j in torrent_downloader.jobs.items():
-    #         print(j)
-    #     print("+" * 20)
-    #     print("+" * 20)
-    #
-    #     return {}
-
-    while len(torrent_downloader.jobs) > 0:
-        print("dora ---------------------------------")
-
-        for key, job in torrent_downloader.jobs.items():
-            handler, converter = job.values()
-
-            # converter.update_none_corupt_duration()
-            converter.start_conversion()
-
-            print("=" * 100)
-            print("=" * 100)
-            print(f"non corupt: {converter.none_corupt_duration}")
-            print(
-                f"Downloading:{handler.status().progress * 100}% - Download Rate:{handler.status().download_rate / 1024}KB/s"
-            )
-            print("=" * 100)
-            print("=" * 100)
-
-            # fully downoaded pause download
-            # if not handler.status().paused and handler.status().progress >= 0.1:
-            #     print("=" * 100)
-            #     print("=" * 100)
-            #     print("Pause download")
-            #     print("=" * 100)
-            #     print("=" * 100)
-            #     handler.pause()
-
-            # full downloaded and converted job completed
-            # if handler.status().is_finished and converter.status == ConverterStatus.DONE:
-            #     print("_" * 100)
-            #     print("_" * 100)
-            #     print("downloaded and converted")
-            #     print("_" * 100)
-            #     print("_" * 100)
-            #     converter.stop_conversion()
-            #     del torrent_downloader.jobs[key]
-            #     continue
-
-            # init conversion
-            # if handler.status().downloading and converter.status == ConverterStatus.IDLE:
-            if handler.status().downloading:
-                print("_" * 100)
-                print("_" * 100)
-                print("Start conversion")
-                print("_" * 100)
-                print("_" * 100)
-                converter.start_conversion()
-
-            # full downloaded but not converted
-            # if handler.status().is_finished and converter.status != ConverterStatus.CONVERTING:
-            #     continue
-
-            # download paused pause conversion
-            # if handler.status().paused and converter.status == ConverterStatus.CONVERTING:
-            #     converter.pause_conversion()
-
-            sleep(1)
-
-    return {
-        "status": "done",
-        "code": 200,
+@app.task(
+    name="download_subtitles_task",
+    queue="torrent_queue",
+)
+def download_subtitles_task(movie_name):
+    movie_name = movie_name[:-4].replace(" ", ".")
+    print(movie_name)
+   
+    api_url = "https://api.opensubtitles.com/api/v1"
+    
+    # API key should be in environment variables for security
+    api_key = os.getenv("OPEN_SUBTITLES_API_KEY")
+    
+    headers = {
+        "Api-Key": api_key,
+        "Content-Type": "application/json",
+        "User-Agent": "MovieAppv1.0"  # Required by OpenSubtitles API
     }
+    
+    languages = {"en", "fr"}
+    subtitles_info = {}
+    
+    print("+" * 20)
+    print("+" * 20)
+    print(f"Downloading subtitles for {movie_name}")
+    
+    try:
+        # Search for subtitles
+        search_params = {
+            "query": movie_name,
+            "languages": ",".join(languages)
+        }
+        
+        search_response = requests.get(
+            f"{api_url}/subtitles", 
+            params=search_params,
+            headers=headers
+        )
+        
+        if search_response.status_code == 200:
+            results = search_response.json().get("data", [])
+            
+            if not results:
+                print(f"No subtitles found for: {movie_name}")
+                return subtitles_info
+                
+            for language in languages:
+                lang_results = [r for r in results if r.get("attributes", {}).get("language") == language]
+                
+                if lang_results:
+                    subtitle = lang_results[0]
+                    file_id = subtitle.get("attributes", {}).get("files", [{}])[0].get("file_id")
+                    
+                    if not file_id:
+                        print(f"No file_id found for {language} subtitle")
+                        continue
+                        
+                    download_response = requests.post(
+                        f"{api_url}/download",
+                        json={"file_id": file_id},
+                        headers=headers
+                    )
+                    
+                    if download_response.status_code == 200:
+                        download_data = download_response.json()
+                        download_link = download_data.get("link")
+                        if download_link:
+                            subtitles_info[language] = {
+                                "file_id": file_id,
+                                "download_link": download_link
+                            }
+                            print(f"Successfully got download link for {language}")
+                        else:
+                            print(f"No download link in response for {language}")
+                    else:
+                        print(f"Download request failed: {download_response.status_code}, {download_response.text}")
+        else:
+            print(f"Error searching for subtitles: {search_response.status_code}, {search_response.text}")
+        
+        print(f"Found subtitles: {list(subtitles_info.keys())}")
+    except Exception as e:
+        print(f"Error downloading subtitles: {str(e)}")
+    
+    print("+" * 20)
+    print("+" * 20)
+    
+    return subtitles_info
+

@@ -5,6 +5,7 @@ import signal
 from enum import Enum
 from time import sleep, time
 
+import m3u8
 import ffmpeg
 
 
@@ -60,11 +61,12 @@ class Stream:
         pass
 
     def attempt_restart(self, new_none_corupt_duration):
-        if self.is_running():
+        if self.is_running() or new_none_corupt_duration <= 0:
             return
 
-        self.start_time = self.none_corupt_duration
-        self.none_corupt_duration = new_none_corupt_duration - self.none_corupt_duration
+        self.none_corupt_duration = new_none_corupt_duration
+        # self.start_time = self.none_corupt_duration
+        # self.none_corupt_duration = new_none_corupt_duration - self.none_corupt_duration
         self.start()
 
     # def time_convert(self, sec):
@@ -74,30 +76,39 @@ class Stream:
 
         if self.is_running():
             return
-
         playlist_path = f"{self.output_path}/{self.resulotion.prefix}/{self.resulotion.prefix}.m3u8"
-        if os.path.exists(playlist_path):
-            with open(playlist_path, 'r') as f:
-                content = f.read()
-                # Find the last segment number from the existing playlist
-                import re
-                segments = re.findall(r'_(\d{3}).ts', content)
-                if segments:
-                    self.current_segment = max(int(num) for num in segments)
+        start_time = 0
+        try:
+            playlist = m3u8.load(playlist_path)
+            start_time = sum(segment.duration for segment in playlist.segments)
+        except :
+            start_time  = 0
+
+        print("*/" * 50)
+        print("*/" * 50)
+        print(f"Playlist path: {playlist_path}")
+        print(f"non corupt: {self.none_corupt_duration}")
+        print(f"Total duration: {start_time}")
+        print("*/" * 50)
+        print("*/" * 50)
+
+        start_time = convert_time(start_time)
+        convert_duration = convert_time(self.none_corupt_duration)
 
         self.process = (
-            ffmpeg.input(self.input_file, ss=self.start_time)
+            ffmpeg.input(self.input_file, ss=start_time)
             .filter("scale", self.resulotion.width, self.resulotion.height)
             .output(
-                f"{self.output_path}/{self.resulotion.prefix}/{self.resulotion.prefix}.m3u8",
-                t=convert_time(self.none_corupt_duration),
+                playlist_path,
+                to=convert_duration,
                 format="hls",
                 hls_time=10,
                 hls_list_size=0,
-                hls_segment_filename=f"{self.output_path}/{self.resulotion.prefix}/{self.resulotion.prefix}_%03d.ts",
-                hls_flags="independent_segments+append_list",  # Add append_list flag
+                hls_playlist_type='event',
+                hls_segment_filename=f"{self.output_path}/{self.resulotion.prefix}/{self.resulotion.prefix}_%3d.ts",
+                hls_flags="append_list+omit_endlist",
                 # hls_flags="independent_segments",
-                start_number=self.current_segment,
+                # start_number = 0,
                 vcodec="libx264",
                 acodec="aac",
                 preset="fast",
@@ -111,7 +122,7 @@ class Stream:
                 level="4.0",
                 map="0:a:0?",
             )
-            .run_async()
+            .run_async(quiet=True)
         )
 
         # self.current_segment = self.current_segment + self.none_corupt_duration // 10
@@ -167,8 +178,8 @@ class VideoConverter:
     def check_severe_corruption(
         self,
         start_time="00:00:00",
-        chunk_duration="00:00:20",
-        bytestream_threshold=-6,
+        chunk_duration="00:00:10",
+        bytestream_threshold=-5,
     ):
 
         # start_time = ffmpeg.parse_time(start_time)
@@ -177,15 +188,15 @@ class VideoConverter:
             ffmpeg.input(self.input_file, ss=start_time)
             .output("null", format="null", t=chunk_duration)
             .global_args("-v", "error", "-xerror")  # BUG: -xerror
-            .run_async(pipe_stdout=True, pipe_stderr=True, quiet=True)
+            .run_async(quiet=True)
         )
 
         process.wait()
         _, stderr = process.communicate()
         for line in stderr.decode("utf-8").splitlines():
-            print("**" * 50)
-            print(line)
-            print("**" * 50)
+            # print("**" * 50)
+            # print(line)
+            # print("**" * 50)
             if "error while decoding MB" in line:
                 bytestream_val = int(line.split("bytestream")[-1])
                 if bytestream_val < bytestream_threshold:
@@ -200,7 +211,7 @@ class VideoConverter:
     def start_conversion(self):
         # self.create_playlist()
 
-        if not self.is_ready_to_convert() or self.none_corupt_duration == 0:
+        if not self.is_ready_to_convert() or self.none_corupt_duration <= 0:
             return
 
         for res in VideoResulotion:
