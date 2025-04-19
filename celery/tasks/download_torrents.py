@@ -9,8 +9,8 @@ from celery import Celery, group
 from celery.signals import worker_process_init, worker_shutdown
 from py1337x.types import category, order
 import requests
-
 from tasks.conr import Converter
+from tasks.subtitles_downloader import SubtitlesDownloader
 
 
 class TorrentTimeoutError(Exception):
@@ -420,86 +420,7 @@ def conversion_task(movie_key):
     queue="torrent_queue",
 )
 def download_subtitles_task(movie_name):
-    movie_name = movie_name[:-4].replace(" ", ".")
-    print(movie_name)
-   
-    api_url = "https://api.opensubtitles.com/api/v1"
-    
-    # API key should be in environment variables for security
-    api_key = os.getenv("OPEN_SUBTITLES_API_KEY")
-    
-    headers = {
-        "Api-Key": api_key,
-        "Content-Type": "application/json",
-        "User-Agent": "MovieAppv1.0"  # Required by OpenSubtitles API
-    }
-    
-    languages = {"en", "fr"}
-    subtitles_info = {}
-    
-    print("+" * 20)
-    print("+" * 20)
-    print(f"Downloading subtitles for {movie_name}")
-    
-    try:
-        # Search for subtitles
-        search_params = {
-            "query": movie_name,
-            "languages": ",".join(languages)
-        }
-        
-        search_response = requests.get(
-            f"{api_url}/subtitles", 
-            params=search_params,
-            headers=headers
-        )
-        
-        if search_response.status_code == 200:
-            results = search_response.json().get("data", [])
-            
-            if not results:
-                print(f"No subtitles found for: {movie_name}")
-                return subtitles_info
-                
-            for language in languages:
-                lang_results = [r for r in results if r.get("attributes", {}).get("language") == language]
-                
-                if lang_results:
-                    subtitle = lang_results[0]
-                    file_id = subtitle.get("attributes", {}).get("files", [{}])[0].get("file_id")
-                    
-                    if not file_id:
-                        print(f"No file_id found for {language} subtitle")
-                        continue
-                        
-                    download_response = requests.post(
-                        f"{api_url}/download",
-                        json={"file_id": file_id},
-                        headers=headers
-                    )
-                    
-                    if download_response.status_code == 200:
-                        download_data = download_response.json()
-                        download_link = download_data.get("link")
-                        if download_link:
-                            subtitles_info[language] = {
-                                "file_id": file_id,
-                                "download_link": download_link
-                            }
-                            print(f"Successfully got download link for {language}")
-                        else:
-                            print(f"No download link in response for {language}")
-                    else:
-                        print(f"Download request failed: {download_response.status_code}, {download_response.text}")
-        else:
-            print(f"Error searching for subtitles: {search_response.status_code}, {search_response.text}")
-        
-        print(f"Found subtitles: {list(subtitles_info.keys())}")
-    except Exception as e:
-        print(f"Error downloading subtitles: {str(e)}")
-    
-    print("+" * 20)
-    print("+" * 20)
-    
-    return subtitles_info
+    sub = SubtitlesDownloader.get_sub_id(movie_name)
+
+    return sub or {}
 
