@@ -5,7 +5,7 @@ from rest_framework.response import Response
 from . import views
 
 urlpatterns = [
-    # path('', health_check, name='health_check'),
-    path('search/', views.search_torrents, name='search-torrents'),
-    path('download/<str:torrent_id>/', views.download_torrent, name='download_torrent'),
+    path('search', views.query_movies, name='query_movies'),
+    path('detail/<int:movie_id>', views.movie_info, name='movie_info'),
+    path('popular', views.popular_movies, name='popular_movies'),
 ]
