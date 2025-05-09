@@ -67,10 +67,9 @@ class Converter:
                     sleep(1)
             process.send_signal(SIGCONT)
 
-    def wait_file_creation(self, file, handle, timeout=10):
+    def wait_file_creation(self, file, handle, timeout=120):
 
         print(f"total done: {handle.status().total_done}")
-
         t = timeout
 
         while handle.status().progress < 0.01 and t > 0:
@@ -94,24 +93,23 @@ class Converter:
                 .output(
                     f'{self.output_path}/1080/1080p.m3u8',
                     {
-                        'map': ['0:v', '0:a'],
+                        'map': ['0:v:0', '0:a:0'], # Map first video and first audio stream
                         'c:v': 'copy',      # Copy video codec
                         'c:a': 'copy',      # Copy audio codec
-                        'sc_threshold': '0',
-                        'g': '48',
-                        'keyint_min': '48',
+                        # Options like 'sc_threshold', 'g', 'keyint_min' are ignored with 'c:v copy'
+                        # 'vf' (video filter) is also ignored with 'c:v copy'
                         'hls_time': '6',
                         'hls_list_size': '0',
                         'hls_flags': 'independent_segments+delete_segments',
                         'hls_segment_type': 'mpegts',
                         'hls_segment_filename': f'{self.output_path}/1080/1080p_%03d.ts',
-                        'var_stream_map': 'v:0,a:0'
+                        # 'var_stream_map' is not needed here as master playlist is manually created
                     }
                 )
                 .output(
                     f'{self.output_path}/720/720p.m3u8',
                     {
-                        'map': ['0:v', '0:a'],
+                        'map': ['0:v:0', '0:a:0'], # Map first video and first audio stream
                         'c:v': 'libx264',
                         'c:a': 'aac',
                         'b:a': '128k',
@@ -120,20 +118,20 @@ class Converter:
                         'crf': '23',
                         'vf': 'scale=-2:720',
                         'sc_threshold': '0',
-                        'g': '48',
-                        'keyint_min': '48',
+                        'g': '48', # Keyframe interval
+                        'keyint_min': '48', # Minimum keyframe interval
                         'hls_time': '6',
                         'hls_list_size': '0',
                         'hls_flags': 'independent_segments+delete_segments',
                         'hls_segment_type': 'mpegts',
                         'hls_segment_filename': f'{self.output_path}/720/720p_%03d.ts',
-                        'var_stream_map': 'v:0,a:0'
+                        # 'var_stream_map' is not needed here
                     }
                 )
                 .output(
                     f'{self.output_path}/144/144p.m3u8',
                     {
-                        'map': ['0:v', '0:a'],
+                        'map': ['0:v:0', '0:a:0'], # Map first video and first audio stream
                         'c:v': 'libx264',
                         'c:a': 'aac',
                         'b:a': '64k',
@@ -142,14 +140,14 @@ class Converter:
                         'crf': '28',
                         'vf': 'scale=-2:144',
                         'sc_threshold': '0',
-                        'g': '48',
-                        'keyint_min': '48',
+                        'g': '48', # Keyframe interval
+                        'keyint_min': '48', # Minimum keyframe interval
                         'hls_time': '6',
                         'hls_list_size': '0',
                         'hls_flags': 'independent_segments+delete_segments',
                         'hls_segment_type': 'mpegts',
                         'hls_segment_filename': f'{self.output_path}/144/144p_%03d.ts',
-                        'var_stream_map': 'v:0,a:0'
+                        # 'var_stream_map' is not needed here
                     }
                 )
             )
